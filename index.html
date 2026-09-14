@@ -4791,5 +4791,244 @@ renderCmtsUI(pid, cmts);
 })();
 
 </script>
+
+<style>
+
+/* ===== MOBILE INTERACTION FIXES ===== */
+.c-textarea,
+#postTxt,
+.comment-compose-input,
+#sheetCommentInput {
+  pointer-events: auto !important;
+  user-select: text !important;
+  -webkit-user-select: text !important;
+  -webkit-touch-callout: default !important;
+  touch-action: manipulation !important;
+  position: relative !important;
+  z-index: 100002 !important;
+}
+
+.create-box,
+.create-top,
+.comments-compose,
+.comment-compose-row,
+.comment-compose-box {
+  position: relative !important;
+  z-index: 100001 !important;
+}
+
+#commentsSheet .comments-close {
+  pointer-events: auto !important;
+  cursor: pointer !important;
+  z-index: 100010 !important;
+}
+
+/* Ensure the comments page never leaves an invisible layer over the forum. */
+.comments-sheet:not(.on) {
+  display: none !important;
+  pointer-events: none !important;
+}
+.comments-sheet.on {
+  pointer-events: auto !important;
+}
+
+</style>
+<script>
+
+/* ============================================================
+   FINAL MOBILE FIX PATCH
+   1) Composer typing
+   2) Comments close/back
+   3) Save button under every post
+   4) Save action from three-dots uses the exact same function
+   ============================================================ */
+
+(function installFinalMobileFixes() {
+  // --- 1. Composer: make sure the textarea is never accidentally disabled.
+  function unlockComposer() {
+    const el = document.getElementById('postTxt');
+    if (!el) return;
+    el.disabled = false;
+    el.readOnly = false;
+    el.removeAttribute('disabled');
+    el.removeAttribute('readonly');
+    el.style.pointerEvents = 'auto';
+    el.style.userSelect = 'text';
+    el.style.webkitUserSelect = 'text';
+    el.style.position = 'relative';
+    el.style.zIndex = '100002';
+  }
+
+  unlockComposer();
+  document.addEventListener('DOMContentLoaded', unlockComposer);
+  setTimeout(unlockComposer, 800);
+  setTimeout(unlockComposer, 2500);
+
+  // --- 2. Comments: closing should ALWAYS return to the forum immediately.
+  // Do not depend on history.back(), which can behave differently in GitHub
+  // Pages/mobile browsers and can leave the comments page visually open.
+  window.closeCommentsSheet = function() {
+    try {
+      if (typeof stopSheetRecording === 'function') stopSheetRecording(true);
+    } catch (e) {}
+
+    try {
+      if (commentsSheetUnsub) {
+        commentsSheetUnsub();
+        commentsSheetUnsub = null;
+      }
+    } catch (e) {}
+
+    try {
+      activeCommentsPid = null;
+    } catch (e) {}
+
+    const sheet = document.getElementById('commentsSheet');
+    if (sheet) {
+      sheet.classList.remove('on');
+      sheet.style.display = 'none';
+      sheet.style.pointerEvents = 'none';
+    }
+
+    document.body.classList.remove('comments-open');
+    document.body.style.overflow = '';
+
+    // Remove only the comments hash; don't navigate away from the forum.
+    try {
+      if (location.hash === '#comments') {
+        history.replaceState(history.state, document.title, location.pathname + location.search);
+      }
+    } catch (e) {}
+
+    // Make sure the forum screen is visible again.
+    const home = document.getElementById('home-screen');
+    if (home) home.classList.add('on');
+
+    unlockComposer();
+  };
+
+  // Replace the old close-button listener with a direct, reliable one.
+  function bindCloseButton() {
+    const btn = document.getElementById('commentsCloseBtn');
+    if (!btn || btn.dataset.finalFixBound === '1') return;
+    btn.dataset.finalFixBound = '1';
+    btn.addEventListener('click', function(e) {
+      e.preventDefault();
+      e.stopPropagation();
+      window.closeCommentsSheet();
+    }, true);
+  }
+  bindCloseButton();
+  setTimeout(bindCloseButton, 500);
+
+  // Browser back: if comments are open, close the comments page instead of
+  // leaving the forum.
+  window.addEventListener('popstate', function() {
+    const sheet = document.getElementById('commentsSheet');
+    if (sheet && sheet.classList.contains('on')) {
+      window.closeCommentsSheet();
+    }
+  }, true);
+
+  // --- 3 & 4. One delegated save handler for BOTH:
+  //     - "حفظ" under each post
+  //     - "حفظ" inside the three-dots menu
+  //
+  // This is deliberately delegated to document because posts are rendered
+  // dynamically after Firebase data arrives.
+  document.addEventListener('click', async function(e) {
+    const target = e.target.closest(
+      '.save-btn[data-pid], .dd-it[data-act="save"][data-pid]'
+    );
+    if (!target) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+
+    const pid = target.getAttribute('data-pid');
+    if (!pid) return;
+
+    if (!window.CU || !CU.uid) {
+      if (typeof toast === 'function') toast('سجّل الدخول أولاً', 'er');
+      return;
+    }
+
+    if (typeof offline !== 'undefined' && offline) {
+      if (typeof toast === 'function') toast('لا يوجد اتصال بالإنترنت', 'er');
+      return;
+    }
+
+    // Prevent double taps.
+    if (target.dataset.saving === '1') return;
+    target.dataset.saving = '1';
+
+    try {
+      const saveRef = ref(db, `saves/${CU.uid}/${pid}`);
+      const snap = await get(saveRef);
+      const alreadySaved = snap.exists();
+
+      if (alreadySaved) {
+        await remove(saveRef);
+      } else {
+        await set(saveRef, true);
+      }
+
+      // Update the visible button under the post immediately.
+      const footerBtns = document.querySelectorAll(
+        `.save-btn[data-pid="${CSS.escape(pid)}"]`
+      );
+      footerBtns.forEach(btn => {
+        const icon = btn.querySelector('i');
+        const label = btn.querySelector('.rct');
+
+        btn.classList.toggle('saved', !alreadySaved);
+        if (icon) {
+          icon.className = !alreadySaved
+            ? 'fa-solid fa-bookmark'
+            : 'fa-regular fa-bookmark';
+        }
+        if (label) label.textContent = !alreadySaved ? 'محفوظ' : 'حفظ';
+      });
+
+      // Update the three-dots menu item too.
+      const menuItems = document.querySelectorAll(
+        `.dd-it[data-act="save"][data-pid="${CSS.escape(pid)}"]`
+      );
+      menuItems.forEach(item => {
+        const icon = item.querySelector('i');
+        if (icon) {
+          icon.className = !alreadySaved
+            ? 'fa-solid fa-bookmark'
+            : 'fa-regular fa-bookmark';
+        }
+        // Keep the menu text as "حفظ" for consistency.
+      });
+
+      if (typeof toast === 'function') {
+        toast(alreadySaved ? 'تمت إزالة المنشور من المحفوظات' : 'تم حفظ المنشور ✓');
+      }
+    } catch (err) {
+      console.error('Save post error:', err);
+      if (typeof toast === 'function') toast('تعذر حفظ المنشور', 'er');
+    } finally {
+      delete target.dataset.saving;
+    }
+  }, true);
+
+  // Stop the original per-button save handler from causing a second toggle
+  // when it is still attached by bindPostEv().
+  const originalBindPostEv = window.bindPostEv;
+  if (typeof originalBindPostEv === 'function') {
+    window.bindPostEv = function() {
+      originalBindPostEv.apply(this, arguments);
+      document.querySelectorAll('.save-btn[data-act="save"]').forEach(btn => {
+        btn.dataset.finalSaveDelegated = '1';
+      });
+    };
+  }
+})();
+
+</script>
 </body>
 </html>
