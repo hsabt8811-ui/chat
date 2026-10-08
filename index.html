@@ -2826,8 +2826,15 @@ body.comments-open #commentsSheet{visibility:visible!important;pointer-events:au
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',run);
   else run();
   const startObserver=()=>{
-    if(!document.body) return;
-    new MutationObserver(()=>run()).observe(document.body,{childList:true,subtree:true});
+    const targets=[document.getElementById('postsWrap'),document.getElementById('commentsList')].filter(Boolean);
+    if(!targets.length) return;
+    let timer=0;
+    const schedule=()=>{
+      clearTimeout(timer);
+      timer=setTimeout(run,60);
+    };
+    const observer=new MutationObserver(schedule);
+    targets.forEach(target=>observer.observe(target,{childList:true,subtree:true}));
   };
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',startObserver);
   else startObserver();
@@ -2910,7 +2917,6 @@ body.comments-open #commentsSheet{visibility:visible!important;pointer-events:au
       <div class="tb-acts">
         <div class="ib" id="searchBtn"><i class="fa-solid fa-magnifying-glass"></i></div>
         <div class="ib" id="themeBtn"><i class="fa-solid fa-moon"></i></div>
-        <div class="ib" id="notifTopBtn"><i class="fa-solid fa-bell"></i><div class="ib-dot" id="topDot"></div></div>
       </div>
     </div>
 
@@ -5119,7 +5125,13 @@ renderCmtsUI(pid, cmts);
   }
   document.addEventListener('DOMContentLoaded',function(){
     protectAudio(document);
-    new MutationObserver(function(){protectAudio(document);}).observe(document.body,{childList:true,subtree:true});
+    const targets=[document.getElementById('postsWrap'),document.getElementById('commentsList'),document.getElementById('commentsSheet')].filter(Boolean);
+    const observer=new MutationObserver(function(mutations){
+      for(const m of mutations){
+        if(m.addedNodes && m.addedNodes.length){ protectAudio(m.target); break; }
+      }
+    });
+    targets.forEach(target=>observer.observe(target,{childList:true,subtree:true}));
   });
 })();
 
@@ -5334,8 +5346,15 @@ renderCmtsUI(pid, cmts);
       sheet.style.pointerEvents='none';
     }
   }
-  setInterval(enforceScreens, 350);
-  document.addEventListener('DOMContentLoaded', enforceScreens);
+  function watchCommentsSheet(){
+    const sheet=document.getElementById('commentsSheet');
+    if(!sheet) return;
+    const sync=()=>enforceScreens();
+    new MutationObserver(sync).observe(sheet,{attributes:true,attributeFilter:['class','style']});
+    sync();
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',watchCommentsSheet);
+  else watchCommentsSheet();
 
   // ------------------------------------------------------------
   // Never render the accidental stylesheet post.
